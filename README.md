@@ -1,3 +1,7 @@
+# Prompt in 3D object detection
+This repository is base on `OpenPCDet`,  adding prompt on DSVT.
+
+
 <img src="docs/open_mmlab.png" align="right" width="30%">
 
 # OpenPCDet
