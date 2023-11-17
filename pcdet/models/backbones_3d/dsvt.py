@@ -1,3 +1,4 @@
+# dsvt_addtoken.py
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
@@ -126,11 +127,13 @@ class DSVT(nn.Module):
             for i in range(len(block_layers)): # block_layers
                 block = block_layers[i]
                 residual = output.clone()
-                if self.use_torch_ckpt==False:
-                    output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
-                                block_id=block_id)
-                else:
-                    output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], block_id)
+                output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
+                            block_id=block_id)
+                # if self.use_torch_ckpt==False:
+                #     output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
+                #                 block_id=block_id)
+                # else:
+                #     output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], block_id)
                 output = residual_norm_layers[i](output + residual)
                 block_id += 1
             if stage_id < self.stage_num - 1:
@@ -183,7 +186,7 @@ class DSVTBlock(nn.Module):
             set_voxel_inds_list,
             set_voxel_masks_list,
             pos_embed_list,
-            block_id,
+            block_id, # len(block_layers): 0~3
     ):
         num_shifts = 2
         output = src
@@ -218,9 +221,6 @@ class DSVT_EncoderLayer(nn.Module):
         src = src + identity
         src = self.norm(src)
 
-        # for k, p in self.win_attn.named_parameters(): # 其中 k 是參數的名稱，p 是參數本身。
-        #     print(f'prompt name:', k)
-
         return src
 
 
@@ -250,13 +250,14 @@ class SetAttention(nn.Module):
         self.num_prompt = 1
         self.dim = 192
         self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
+        self.prompt_proj = nn.Identity()
         nn.init.xavier_uniform_(self.prompt.data)
 
     def incorporate_prompt(self, query, key, value):
         set_num = query.shape[0]
-        prompt_query = torch.cat(((self.prompt).expand(set_num, -1, -1), query), dim=1) # (set_num, set_size=36, C=192) -> (set_num, set_size=37, C=192)
-        prompt_key = torch.cat(((self.prompt).expand(set_num, -1, -1), key), dim=1) 
-        prompt_value = torch.cat(((self.prompt).expand(set_num, -1, -1), value), dim=1)
+        prompt_query = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), query), dim=1) # (set_num, set_size=36, C=192) -> (set_num, set_size=37, C=192)
+        prompt_key = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), key), dim=1) 
+        prompt_value = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), value), dim=1)
         return prompt_query, prompt_key, prompt_value
 
     def incorporate_mask(self, key_padding_mask):

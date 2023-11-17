@@ -15,3 +15,7 @@
 
 5. dsvt_addtoken:
     Adding extra tokens in each sets.
+
+6. dsvt_addtoken_shallow:
+    Adding extra tokens in each sets.
+    Only apply on 1-st DSVT Block's X-Axis Partition.

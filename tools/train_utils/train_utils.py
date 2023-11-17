@@ -55,12 +55,6 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         with torch.cuda.amp.autocast(enabled=use_amp):
             loss, tb_dict, disp_dict = model_func(model, batch)
 
-        # prompt
-        # for k, p in model.named_parameters():
-        #     if "prompt" in k:
-        #         print(f'prompt name: ', k)
-        #         print(f'weights: ', p) 
-
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
@@ -150,6 +144,14 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
                 
     if rank == 0:
         pbar.close()
+    
+    
+    # prompt
+    # for k, p in model.named_parameters():
+    #     if "stage_0.0.encoder_list.1.win_attn.prompt" in k:
+    #         print(f'prompt name: ', k)
+    #         print(f'weights: ', p) 
+
     return accumulated_iter
 
 

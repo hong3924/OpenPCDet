@@ -1,4 +1,4 @@
-# dsvt_pg2.py
+# dsvt_addtoken_shallow.py
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
@@ -42,10 +42,6 @@ class DSVT(nn.Module):
         # save GPU memory
         self.use_torch_ckpt = self.model_cfg.get('USE_CHECKPOINT', False) # True(沒有'USE_CHECKPOINT'的話，設為False)
 
-        # prompt
-        prompt_generator_list=[]
-        prompt_generator_list.append(prompt_generator(d_model[0]))
-        self.__setattr__(f'prompt_generator', nn.ModuleList(prompt_generator_list)) 
 
         # Sparse Regional Attention Blocks
         stage_num = len(block_name) # 1
@@ -122,10 +118,6 @@ class DSVT(nn.Module):
         pooling_index_in_pool = [voxel_info[f'pooling_index_in_pool_stage{s+1}'] for s in range(self.stage_num-1)]
         pooling_preholder_feats = [voxel_info[f'pooling_preholder_feats_stage{s+1}'] for s in range(self.stage_num-1)]
 
-        # prompt
-        prompt_generator_layers = self.__getattr__(f'prompt_generator')
-        prompt_generator = prompt_generator_layers[0]
-        pi = prompt_generator(voxel_feat)
 
         output = voxel_feat
         block_id = 0
@@ -135,11 +127,13 @@ class DSVT(nn.Module):
             for i in range(len(block_layers)): # block_layers
                 block = block_layers[i]
                 residual = output.clone()
-                if self.use_torch_ckpt==False:
-                    output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
-                                pi, block_id=block_id)
-                else:
-                    output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], pi, block_id)
+                output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
+                            block_id=block_id)
+                # if self.use_torch_ckpt==False:
+                #     output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
+                #                 block_id=block_id)
+                # else:
+                #     output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], block_id, use_reentrant=False)
                 output = residual_norm_layers[i](output + residual)
                 block_id += 1
             if stage_id < self.stage_num - 1:
@@ -192,8 +186,7 @@ class DSVTBlock(nn.Module):
             set_voxel_inds_list,
             set_voxel_masks_list,
             pos_embed_list,
-            pi,
-            block_id,
+            block_id, # len(block_layers): 0 ~ 3
     ):
         num_shifts = 2
         output = src
@@ -206,7 +199,12 @@ class DSVTBlock(nn.Module):
             set_voxel_masks = set_voxel_masks_list[shift_id][set_id]
             pos_embed = pos_embed_list[pos_embed_id]
             layer = self.encoder_list[i]
-            output = layer(output, set_voxel_inds, set_voxel_masks, pi, pos_embed) # -> DSVT_EncoderLayer(src, set_voxel_inds, set_voxel_masks, pos=None)
+            # prompt shallow mode: only add prompt on 1-st DSVTblock's X-axis
+            if block_id == 0 and i == 0:
+                shallow = True
+            else:
+                shallow = False
+            output = layer(output, set_voxel_inds, set_voxel_masks, shallow, pos_embed) # -> DSVT_EncoderLayer(src, set_voxel_inds, set_voxel_masks, pos=None)
 
         return output
 
@@ -222,50 +220,14 @@ class DSVT_EncoderLayer(nn.Module):
         self.d_model = d_model
 
 
-    def forward(self,src,set_voxel_inds,set_voxel_masks,pi,pos=None):
+    def forward(self,src,set_voxel_inds,set_voxel_masks, shallow, pos=None):
         identity = src
-        src = self.win_attn(src, pi, pos, set_voxel_masks, set_voxel_inds) # -> SetAttention(src, pos=None, key_padding_mask=None, voxel_inds=None)
+        src = self.win_attn(src, shallow, pos, set_voxel_masks, set_voxel_inds) # -> SetAttention(src, pos=None, key_padding_mask=None, voxel_inds=None)
         src = src + identity
         src = self.norm(src)
-
-        # for k, p in self.win_attn.named_parameters(): # 其中 k 是參數的名稱，p 是參數本身。
-        #     print(f'prompt name:', k)
-
+        # print(f'shallow: ', shallow)
         return src
 
-# prompt
-class prompt_generator(nn.Module):
-    '''
-        Args:
-            src (Tensor[float]): Voxel features with shape (N, C), where N is the number of voxels.
-        Returns:
-            pi (Tensor[float]): Dynamic prompt for each input frame (1, d_model).
-    '''
-    def __init__(self, d_model, dim_feedforward=2048, activation="relu"):
-        super().__init__()
-        self.d_model = d_model # 192
-
-        # linear layers
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.linear2 = nn.Linear(dim_feedforward, dim_feedforward)
-        self.linear3 = nn.Linear(dim_feedforward, dim_feedforward)
-        self.linear4 = nn.Linear(dim_feedforward, d_model)
-        self.norm1 = nn.BatchNorm1d(d_model) # nn.LayerNorm(d_model)
-        self.norm2 = nn.BatchNorm1d(dim_feedforward) # nn.LayerNorm(dim_feedforward)
-
-        self.activation = _get_activation_fn(activation)
-    
-    def forward(self, src):
-        pi = src.clone() # (N, 192)
-        # pi = pi.view(1, -1) # 壓縮成(1, N*C)
-        pi = self.norm1(pi) # (N, 192)
-        pi = self.activation(self.norm2(self.linear1(pi))) # (N, 2048)
-        pi = self.activation(self.norm2(self.linear2(pi))) # (N, 2048)
-        pi = self.activation(self.norm2(self.linear3(pi))) # (N, 2048)
-        pi = self.activation(self.norm1(self.linear4(pi))) # (N, 192)
-        pi = torch.mean(pi, dim=0, keepdim=True) # (1, 192)
-        return pi
-    
 
 class SetAttention(nn.Module):
 
@@ -290,22 +252,26 @@ class SetAttention(nn.Module):
         self.activation = _get_activation_fn(activation)
         
         # prompt
-        # self.prompt_generator = prompt_generator(self.d_model)
+        self.num_prompt = 1
+        self.dim = 192
+        self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
+        self.prompt_proj = nn.Identity()
+        nn.init.xavier_uniform_(self.prompt.data)
 
-    def incorporate_prompt(self, query, key, value, pi):
+    def incorporate_prompt(self, query, key, value):
         set_num = query.shape[0]
-        prompt_query = torch.cat((query, pi.expand(set_num, -1, -1)), dim=1) # (set_num, set_size=36, C=192) -> (set_num, set_size=37, C=192)
-        prompt_key = torch.cat((key, pi.expand(set_num, -1, -1)), dim=1) 
-        prompt_value = torch.cat((value, pi.expand(set_num, -1, -1)), dim=1)
+        prompt_query = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), query), dim=1) # (set_num, set_size=36, C=192) -> (set_num, set_size=37, C=192)
+        prompt_key = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), key), dim=1) 
+        prompt_value = torch.cat((self.prompt_proj((self.prompt).expand(set_num, -1, -1)), value), dim=1)
         return prompt_query, prompt_key, prompt_value
 
     def incorporate_mask(self, key_padding_mask):
         set_num = key_padding_mask.shape[0]
         prompt_mask = torch.zeros(set_num, 1, dtype=torch.bool, device=key_padding_mask.device)
-        prompt_padding_mask = torch.cat((key_padding_mask, prompt_mask), dim=1) # (set_num, set_size=36) -> (set_num, set_size=37)
+        prompt_padding_mask = torch.cat((prompt_mask, key_padding_mask), dim=1) # (set_num, set_size=36) -> (set_num, set_size=37)
         return prompt_padding_mask
 
-    def forward(self, src, pi, pos=None, key_padding_mask=None, voxel_inds=None):
+    def forward(self, src, shallow, pos=None, key_padding_mask=None, voxel_inds=None):
         '''
         Args:
             src (Tensor[float]): Voxel features with shape (N, C), where N is the number of voxels.
@@ -326,14 +292,11 @@ class SetAttention(nn.Module):
             value = set_features           # (set_num, set_size=36, C=192)
 
         # prompt
-        # pi = prompt_generator(src)
-        query, key, value = self.incorporate_prompt(query, key, value, pi) # (set_num, set_size=37, C=192)
-        key_padding_mask = self.incorporate_mask(key_padding_mask)
-        # print(f'query:', query.size())
-        # print(f'key:', key.size())
-        # print(f'value:', value.size())
-        # print(f'key_padding_mask:', key_padding_mask.size())
-    
+        if shallow:
+            query, key, value = self.incorporate_prompt(query, key, value) # (set_num, set_size=37, C=192)
+            key_padding_mask = self.incorporate_mask(key_padding_mask)
+            # print(f'prompt:', self.prompt)
+            # print(self.prompt.grad)
 
         if key_padding_mask is not None:
             src2 = self.self_attn(query, key, value, key_padding_mask)[0] # -> nn.MultiheadAttention(query: Tensor, key: Tensor, value: Tensor, key_padding_mask: Optional[Tensor] = None,
@@ -355,6 +318,7 @@ class SetAttention(nn.Module):
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
+
         return src
 
 
