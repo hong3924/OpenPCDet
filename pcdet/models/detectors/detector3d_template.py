@@ -75,8 +75,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in vfe_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['num_point_features'] = vfe_module.get_output_feature_dim()
         model_info_dict['module_list'].append(vfe_module)
@@ -97,7 +97,7 @@ class Detector3DTemplate(nn.Module):
         # 新增檢查 parameter 是否包含 'prompt'
         if self.using_prompt is True:
             for k, p in backbone_3d_module.named_parameters():
-                if "prompt" not in k:
+                if "PromptGenerator" not in k and "prompt" not in k:
                     p.requires_grad = False
                 print(f'prompt name: ', k)
                 print(f'requires_grad: ', p.requires_grad) 
@@ -121,8 +121,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in map_to_bev_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(map_to_bev_module)
         model_info_dict['num_bev_features'] = map_to_bev_module.num_bev_features
@@ -141,8 +141,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in backbone_2d_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(backbone_2d_module)
         model_info_dict['num_bev_features'] = backbone_2d_module.num_bev_features
@@ -164,8 +164,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in pfe_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(pfe_module)
         model_info_dict['num_point_features'] = pfe_module.num_point_features
@@ -187,10 +187,10 @@ class Detector3DTemplate(nn.Module):
         )
 
         # prompt    
-        if self.using_prompt is True:
-            for k, p in dense_head_module.named_parameters():
-                print(f'prompt name:', k)
-                print(f'requires_grad: ', p.requires_grad) 
+        # if self.using_prompt is True:
+        #     for k, p in dense_head_module.named_parameters():
+                # print(f'prompt name:', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(dense_head_module)
         return dense_head_module, model_info_dict
@@ -215,8 +215,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in point_head_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(point_head_module)
         return point_head_module, model_info_dict
@@ -237,8 +237,8 @@ class Detector3DTemplate(nn.Module):
         if self.using_prompt is True:
             for k, p in point_head_module.named_parameters():
                 p.requires_grad = False
-                print(f'prompt name: ', k)
-                print(f'requires_grad: ', p.requires_grad) 
+                # print(f'prompt name: ', k)
+                # print(f'requires_grad: ', p.requires_grad) 
 
         model_info_dict['module_list'].append(point_head_module)
         return point_head_module, model_info_dict

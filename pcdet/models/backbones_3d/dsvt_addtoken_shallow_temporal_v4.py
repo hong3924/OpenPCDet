@@ -1,20 +1,13 @@
-# dsvt_prompt_pool.py
+# dsvt_addtoken_shallow_temporal_v4.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from math import ceil
 
 from pcdet.models.model_utils.dsvt_utils import get_window_coors, get_inner_win_inds_cuda, get_pooling_index, get_continous_inds
 from pcdet.models.model_utils.dsvt_utils import PositionEmbeddingLearned
 
-penalty = 0
-def store_penalty_from_this_step(p):
-    global penalty
-    penalty = p
-def get_penalty_from_this_step():
-    global penalty
-    return penalty
+import ipdb
 
 class DSVT(nn.Module):
     '''Dynamic Sparse Voxel Transformer Backbone.
@@ -175,11 +168,6 @@ class DSVT(nn.Module):
             if p.dim() > 1 and 'scaler' not in name:
                 nn.init.xavier_uniform_(p)
 
-    # prompt_pool penalty
-    def get_penalty(self):
-        penalty = get_penalty_from_this_step()
-        return penalty
-
 
 class DSVTBlock(nn.Module):
     ''' Consist of two encoder layer, shift and shift back.
@@ -266,34 +254,33 @@ class SetAttention(nn.Module):
         self.activation = _get_activation_fn(activation)
         
         # prompt
-        # self.num_prompt = 1
-        # self.dim = 192
-        # # self.cur_prompt = torch.randn(self.num_prompt, self.dim)
-        # self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
-        # self.prompt_proj = nn.Identity()
-        # nn.init.xavier_uniform_(self.prompt.data)
+        self.num_prompt = 1
+        self.dim = 192
+        # self.cur_prompt = torch.randn(self.num_prompt, self.dim)
+        self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
+        self.prompt_proj = nn.Identity()
+        nn.init.xavier_uniform_(self.prompt.data)
 
-        # prompt pool
-        self.pool_size = 40 
-        self.length = 5 
-        self.top_k = 8 
-
-        self.PromptPool = PromptPool(self.d_model, self.length, self.pool_size, self.top_k)
+        # prompt generator
+        self.PromptGenerator = PromptGenerator(self.d_model)
 
 
-    def incorporate_prompt(self, query, key, value, prompt):
+    def incorporate_prompt(self, query, key, value, scene_prompt):
         '''
         Args:
-            prompt(bs, num_prompt, C)
+            prompt(num_prompt, C)
+            scene_prompt(set_num, num_prompt, C)
             query,key,value(set_num, set_size, C)
             prompt_query,prompt_key,prompt_value(set_num, set_size+num_prompt, C)
         '''
-        prompt_query = torch.cat((prompt, query), dim=1)
-        prompt_key = torch.cat((prompt, key), dim=1)
-        prompt_value = torch.cat((prompt, value), dim=1)
+        set_num = query.shape[0]
+        temp_prompt = torch.add(scene_prompt, (self.prompt_proj((self.prompt).expand(set_num, -1, -1))))
+        prompt_query = torch.cat((self.prompt_proj(temp_prompt), query), dim=1)
+        prompt_key = torch.cat((self.prompt_proj(temp_prompt), key), dim=1) 
+        prompt_value = torch.cat((self.prompt_proj(temp_prompt), value), dim=1)
         return prompt_query, prompt_key, prompt_value
 
-    def incorporate_mask(self, key_padding_mask, prompt):
+    def incorporate_mask(self, key_padding_mask):
         '''
         Args:
             key_padding_mask(set_num, set_size)
@@ -302,10 +289,21 @@ class SetAttention(nn.Module):
             prompt_padding_mask(set_num, set_size+num_prompt)
         '''
         set_num = key_padding_mask.shape[0]
-        num_prompt = prompt.shape[1]
-        prompt_mask = torch.zeros(set_num, num_prompt, dtype=torch.bool, device=key_padding_mask.device)
+        prompt_mask = torch.zeros(set_num, self.num_prompt, dtype=torch.bool, device=key_padding_mask.device)
         prompt_padding_mask = torch.cat((prompt_mask, key_padding_mask), dim=1) 
         return prompt_padding_mask
+
+    def exclude_prompt(self, src2):
+        '''
+        Args:
+            src2(set_num, set_size + prompt_num, C)
+            split_src2(set_num, set_size, C)
+            split_prompt(set_num, prompt_num, C)
+        Returns:
+            mean_prompt(1, prompt_num, C)
+        '''
+        _, split_src2 = torch.split(src2, [src2.size(1)-36, 36], dim=1)
+        return split_src2
 
     def forward(self, src, shallow, pos=None, key_padding_mask=None, voxel_inds=None):
         '''
@@ -328,11 +326,11 @@ class SetAttention(nn.Module):
             key = set_features + set_pos   # (set_num, set_size=36, C=192)
             value = set_features           # (set_num, set_size=36, C=192)
 
-        # prompt pool
-        # if shallow:
-        prompt = self.PromptPool(set_features) # (bs, allowed_size * prompt_len, embed_dim)
-        query, key, value = self.incorporate_prompt(query, key, value, prompt)
-        key_padding_mask = self.incorporate_mask(key_padding_mask, prompt)
+        # prompt gennerator
+        if shallow:
+            scene_prompt = self.PromptGenerator(set_features)
+            query, key, value = self.incorporate_prompt(query, key, value, scene_prompt)
+            key_padding_mask = self.incorporate_mask(key_padding_mask)
 
         if key_padding_mask is not None:
             src2 = self.self_attn(query, key, value, key_padding_mask)[0] # -> nn.MultiheadAttention(query: Tensor, key: Tensor, value: Tensor, key_padding_mask: Optional[Tensor] = None,
@@ -340,9 +338,8 @@ class SetAttention(nn.Module):
         else:
             src2 = self.self_attn(query, key, value)[0]
 
-        # if shallow:
-        num_prompt = prompt.shape[1]
-        src2 = src2[:, num_prompt:, :]
+        if shallow:
+            src2 = src2[:, self.num_prompt:, :]
         
         # map voxel featurs from set space to voxel space: (set_num, set_size, C) --> (N, C)
         flatten_inds = voxel_inds.reshape(-1)
@@ -362,54 +359,37 @@ class SetAttention(nn.Module):
         return src
 
 
-class PromptPool(nn.Module):
+class PromptGenerator(nn.Module):
     '''
         Args:
             set_features (Tensor[float]): Voxel features with shape (set_num, set_size=36, C=192).
         Returns:
             set_features (Tensor[float]): Dynamic prompt for each input frame (set_num, 1, C=192).
     '''
-    def __init__(self, d_model, length, pool_size, top_k):
+    def __init__(self, d_model, dim_feedforward=2048, activation="relu"):
         super().__init__()
-        self.embed_dim =  d_model
-        self.length =  length
-        self.pool_size =  pool_size
-        self.top_k = top_k
+        self.d_model = d_model # 192
+
+        # linear layers
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, dim_feedforward)
+        self.linear3 = nn.Linear(dim_feedforward, dim_feedforward)
+        self.linear4 = nn.Linear(dim_feedforward, d_model)
+        self.norm1 = nn.BatchNorm1d(36) # nn.LayerNorm(d_model)
+        # self.norm2 = nn.BatchNorm1d(dim_feedforward) # nn.LayerNorm(dim_feedforward)
         
-        # 使用 nn.Parameter 定义可训练的 prompt 参数
-        self.prompt = nn.Parameter(torch.Tensor(self.pool_size, self.length, self.embed_dim))
-        self.prompt_key = nn.Parameter(torch.Tensor(self.pool_size, self.embed_dim))
-        nn.init.xavier_uniform_(self.prompt)
-        nn.init.xavier_uniform_(self.prompt_key)
-
-    def l2_normalize(self, x, axis=None, epsilon=1e-12):
-        square_sum = torch.sum(torch.pow(x, 2), dim=axis, keepdim=True)
-        x_inv_norm = torch.rsqrt(torch.clamp(square_sum, min=epsilon))
-        return x * x_inv_norm
-
+        self.activation = _get_activation_fn(activation)
+    
     def forward(self, set_features):
-        set_features_mean, _ = torch.max(set_features, dim=1) # (set_num, C=192)
-
-        # prompt_key_norm = self.l2_normalize(self.prompt_key, axis=-1) # (pool_size, embed_dim)
-        # set_features_norm = self.l2_normalize(set_features_mean, axis=-1) # (bs, embed_dim)
-        prompt_key_norm = F.normalize(self.prompt_key, p=2, dim=-1)
-        set_features_norm = F.normalize(set_features_mean, p=2, dim=-1)
         
-        sim = torch.matmul(prompt_key_norm, torch.transpose(set_features_norm, 0, 1)) # pool_size, bs
-        sim = torch.transpose(sim, 0, 1)  # (bs, pool_size)
-        sim_top_k, idx = torch.topk(sim, k=self.top_k, dim=1) # (bs, top_k)
-
-        # Put pull_constraint loss calculation inside
-        batched_key_norm = prompt_key_norm[idx]  # bs, top_k, embed_dim
-        set_features_norm = torch.unsqueeze(set_features_norm, dim=1) # bs, 1, embed_dim
-        sim_pull = batched_key_norm * set_features_norm # bs, top_k, embed_dim
-        reduce_sim = torch.sum(sim_pull) / set_features_norm.shape[0]
-        store_penalty_from_this_step(reduce_sim)
-        
-        batched_prompt_raw = self.prompt[idx] # (bs, top_k, self.length, self.embed_dim)
-        bs, allowed_size, prompt_len, embed_dim = batched_prompt_raw.shape
-        batched_prompt = batched_prompt_raw.view(bs, allowed_size * prompt_len, embed_dim)
-        return batched_prompt
+        set_features = set_features.clone() # (set_num, 36, 192)
+        set_features = self.norm1(set_features) # (set_num, 36, 192)
+        set_features = self.activation(self.norm1(self.linear1(set_features))) # (set_num, 36, 2048)
+        set_features = self.activation(self.norm1(self.linear2(set_features))) # (set_num, 36, 2048)
+        set_features = self.activation(self.norm1(self.linear3(set_features))) # (set_num, 36, 2048)
+        set_features = self.activation(self.norm1(self.linear4(set_features))) # (set_num, 36, 192)
+        set_features = torch.mean(set_features, dim=1, keepdim=True) # (set_num, 1, 192)
+        return set_features
 
 
 class Stage_Reduction_Block(nn.Module):

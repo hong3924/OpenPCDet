@@ -111,7 +111,9 @@ class DSVT(nn.Module):
         voxel_info = self.input_layer(batch_dict)
 
         voxel_feat = voxel_info['voxel_feats_stage0']
-        set_voxel_inds_list = [[voxel_info[f'set_voxel_inds_stage{s}_shift{i}'] for i in range(self.num_shifts[s])] for s in range(self.stage_num)]
+        # set_voxel_inds_stage{i}_shift{j} (Tensor[int]): Set partition index with shape (2, set_num, 36).
+        # 2 indicates x-axis partition and y-axis partition. 
+        set_voxel_inds_list = [[voxel_info[f'set_voxel_inds_stage{s}_shift{i}'] for i in range(self.num_shifts[s])] for s in range(self.stage_num)] # [[[ voxel_info[set_voxel_inds_stage0_shift0], voxel_info[set_voxel_inds_stage0_shift1] ]]]
         set_voxel_masks_list = [[voxel_info[f'set_voxel_mask_stage{s}_shift{i}'] for i in range(self.num_shifts[s])] for s in range(self.stage_num)]
         pos_embed_list = [[[voxel_info[f'pos_embed_stage{s}_block{b}_shift{i}'] for i in range(self.num_shifts[s])] for b in range(self.set_info[s][1])] for s in range(self.stage_num)]
         pooling_mapping_index = [voxel_info[f'pooling_mapping_index_stage{s+1}'] for s in range(self.stage_num-1)]
@@ -183,7 +185,7 @@ class DSVTBlock(nn.Module):
     def forward(
             self,
             src,
-            set_voxel_inds_list,
+            set_voxel_inds_list, # (2, set_num, set_info[i][0])
             set_voxel_masks_list,
             pos_embed_list,
             block_id, # len(block_layers): 0 ~ 3
@@ -195,7 +197,7 @@ class DSVTBlock(nn.Module):
             set_id = i
             shift_id = block_id % 2 
             pos_embed_id = i
-            set_voxel_inds = set_voxel_inds_list[shift_id][set_id]
+            set_voxel_inds = set_voxel_inds_list[shift_id][set_id] # 00, 01
             set_voxel_masks = set_voxel_masks_list[shift_id][set_id]
             pos_embed = pos_embed_list[pos_embed_id]
             layer = self.encoder_list[i]
@@ -473,9 +475,9 @@ class DSVTInputLayer(nn.Module):
         
         for stage_id in range(self.stage_num): # stage_num = 1
             # window partition of corrsponding stage-map
-            voxel_info = self.window_partition(voxel_info, stage_id) 
+            voxel_info = self.window_partition(voxel_info, stage_id) # stage_id = 0
             # generate set id of corrsponding stage-map
-            voxel_info = self.get_set(voxel_info, stage_id)
+            voxel_info = self.get_set(voxel_info, stage_id) # stage_id = 0
             for block_id in range(self.set_info[stage_id][1]): # set_info[0][1] = 4
                 for shift_id in range(self.num_shifts[stage_id]): # num_shifts[0] = 2
                     voxel_info[f'pos_embed_stage{stage_id}_block{block_id}_shift{shift_id}'] = \
@@ -555,8 +557,9 @@ class DSVTInputLayer(nn.Module):
     def get_set_single_shift(self, batch_win_inds, stage_id, shift_id=None, coors_in_win=None):
         device = batch_win_inds.device
         # the number of voxels assigned to a set
-        voxel_num_set = self.set_info[stage_id][0]
-        # max number of voxels in a window
+        voxel_num_set = self.set_info[stage_id][0] # 36
+        # max number of voxels in a window 
+        # self.window_shape = [[12, 12, 1], [24, 24, 1]]
         max_voxel = self.window_shape[stage_id][shift_id][0] * self.window_shape[stage_id][shift_id][1] * self.window_shape[stage_id][shift_id][2]
         # get unique set indexs
         contiguous_win_inds = torch.unique(batch_win_inds, return_inverse=True)[1]
@@ -577,7 +580,7 @@ class DSVTInputLayer(nn.Module):
         # obtain unique indexs in whole space
         select_idx = base_select_idx
         select_idx = select_idx + set_win_inds.view(-1, 1) * max_voxel
-           
+        
         # this function will return unordered inner window indexs of each voxel
         inner_voxel_inds = get_inner_win_inds_cuda(contiguous_win_inds)
         global_voxel_inds = contiguous_win_inds * max_voxel + inner_voxel_inds
@@ -618,8 +621,8 @@ class DSVTInputLayer(nn.Module):
             batch_win_inds, coors_in_win = get_window_coors(voxel_info[f'voxel_coors_stage{stage_id}'], 
                                                         self.sparse_shape_list[stage_id], self.window_shape[stage_id][i], i == 1, self.shift_list[stage_id][i])
             #        get_window_coors(coors, sparse_shape, window_shape, do_shift, shift_list=None, return_win_coors=False):
-            # i = 0: get_window_coors(voxel_info['voxel_feats_stage0'], [468, 468, 1], [12, 12, 1], False, [0, 0, 0])
-            # i = 1: get_window_coors(voxel_info['voxel_feats_stage0'], [468, 468, 1], [24, 24, 1], True, [6, 6, 0])
+            # i = 0: get_window_coors(voxel_info['voxel_feats_stage0'], [468, 468, 1], [12, 12, 1], False, [0, 0, 0], False)
+            # i = 1: get_window_coors(voxel_info['voxel_feats_stage0'], [468, 468, 1], [24, 24, 1], True, [6, 6, 0], False)
             voxel_info[f'batch_win_inds_stage{stage_id}_shift{i}'] = batch_win_inds
             voxel_info[f'coors_in_win_stage{stage_id}_shift{i}'] = coors_in_win
         

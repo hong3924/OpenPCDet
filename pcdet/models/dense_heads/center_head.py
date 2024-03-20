@@ -7,7 +7,7 @@ from ..model_utils import model_nms_utils
 from ..model_utils import centernet_utils
 from ...utils import loss_utils
 from functools import partial
-
+import ipdb
 
 class SeparateHead(nn.Module):
     def __init__(self, input_channels, sep_head_dict, init_bias=-2.19, use_bias=False, norm_func=None):
@@ -229,7 +229,7 @@ class CenterHead(nn.Module):
     def sigmoid(self, x):
         y = torch.clamp(x.sigmoid(), min=1e-4, max=1 - 1e-4)
         return y
-
+    
     def get_loss(self):
         pred_dicts = self.forward_ret_dict['pred_dicts']
         target_dicts = self.forward_ret_dict['target_dicts']
@@ -288,7 +288,6 @@ class CenterHead(nn.Module):
                     else:
                         loss += (batch_box_preds_for_iou * 0.).sum()
                         tb_dict['iou_reg_loss_head_%d' % idx] = (batch_box_preds_for_iou * 0.).sum()
-
 
 
         tb_dict['rpn_loss'] = loss.item()

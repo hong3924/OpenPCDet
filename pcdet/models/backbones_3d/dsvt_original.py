@@ -1,20 +1,11 @@
-# dsvt_prompt_pool.py
+# dsvt_original.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from math import ceil
 
 from pcdet.models.model_utils.dsvt_utils import get_window_coors, get_inner_win_inds_cuda, get_pooling_index, get_continous_inds
 from pcdet.models.model_utils.dsvt_utils import PositionEmbeddingLearned
-
-penalty = 0
-def store_penalty_from_this_step(p):
-    global penalty
-    penalty = p
-def get_penalty_from_this_step():
-    global penalty
-    return penalty
 
 class DSVT(nn.Module):
     '''Dynamic Sparse Voxel Transformer Backbone.
@@ -50,8 +41,7 @@ class DSVT(nn.Module):
         self.reduction_type = self.model_cfg.get('reduction_type', 'attention') # 'attention'(沒有'reduction_type'的話，設為'attention')
         # save GPU memory
         self.use_torch_ckpt = self.model_cfg.get('USE_CHECKPOINT', False) # True(沒有'USE_CHECKPOINT'的話，設為False)
-
-
+ 
         # Sparse Regional Attention Blocks
         stage_num = len(block_name) # 1
         for stage_id in range(stage_num):
@@ -99,6 +89,10 @@ class DSVT(nn.Module):
 
         self._reset_parameters()
 
+        # Freeze
+        # for param in self.parameters():
+        #     param.requires_grad_(False)
+
     def forward(self, batch_dict):
         '''
         Args:
@@ -127,7 +121,6 @@ class DSVT(nn.Module):
         pooling_index_in_pool = [voxel_info[f'pooling_index_in_pool_stage{s+1}'] for s in range(self.stage_num-1)]
         pooling_preholder_feats = [voxel_info[f'pooling_preholder_feats_stage{s+1}'] for s in range(self.stage_num-1)]
 
-
         output = voxel_feat
         block_id = 0
         for stage_id in range(self.stage_num): # stage_num = 1
@@ -137,12 +130,12 @@ class DSVT(nn.Module):
                 block = block_layers[i]
                 residual = output.clone()
                 output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
-                            block_id=block_id)
+                                block_id=block_id)
                 # if self.use_torch_ckpt==False:
                 #     output = block(output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], \
                 #                 block_id=block_id)
                 # else:
-                #     output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], block_id, use_reentrant=False)
+                #     output = checkpoint(block, output, set_voxel_inds_list[stage_id], set_voxel_masks_list[stage_id], pos_embed_list[stage_id][i], block_id)
                 output = residual_norm_layers[i](output + residual)
                 block_id += 1
             if stage_id < self.stage_num - 1:
@@ -175,11 +168,6 @@ class DSVT(nn.Module):
             if p.dim() > 1 and 'scaler' not in name:
                 nn.init.xavier_uniform_(p)
 
-    # prompt_pool penalty
-    def get_penalty(self):
-        penalty = get_penalty_from_this_step()
-        return penalty
-
 
 class DSVTBlock(nn.Module):
     ''' Consist of two encoder layer, shift and shift back.
@@ -200,7 +188,7 @@ class DSVTBlock(nn.Module):
             set_voxel_inds_list,
             set_voxel_masks_list,
             pos_embed_list,
-            block_id, # len(block_layers): 0 ~ 3
+            block_id,
     ):
         num_shifts = 2
         output = src
@@ -213,12 +201,7 @@ class DSVTBlock(nn.Module):
             set_voxel_masks = set_voxel_masks_list[shift_id][set_id]
             pos_embed = pos_embed_list[pos_embed_id]
             layer = self.encoder_list[i]
-            # prompt shallow mode: only add prompt on 1-st DSVTblock's X-axis
-            if block_id == 0 and i == 0:
-                shallow = True
-            else:
-                shallow = False
-            output = layer(output, set_voxel_inds, set_voxel_masks, shallow, pos_embed) # -> DSVT_EncoderLayer(src, set_voxel_inds, set_voxel_masks, pos=None)
+            output = layer(output, set_voxel_inds, set_voxel_masks, pos_embed) # -> DSVT_EncoderLayer(src, set_voxel_inds, set_voxel_masks, pos=None)
 
         return output
 
@@ -234,12 +217,15 @@ class DSVT_EncoderLayer(nn.Module):
         self.d_model = d_model
 
 
-    def forward(self,src,set_voxel_inds,set_voxel_masks, shallow, pos=None):
+    def forward(self,src,set_voxel_inds,set_voxel_masks,pos=None):
         identity = src
-        src = self.win_attn(src, shallow, pos, set_voxel_masks, set_voxel_inds) # -> SetAttention(src, pos=None, key_padding_mask=None, voxel_inds=None)
+        src = self.win_attn(src, pos, set_voxel_masks, set_voxel_inds) # -> SetAttention(src, pos=None, key_padding_mask=None, voxel_inds=None)
         src = src + identity
         src = self.norm(src)
-        # print(f'shallow: ', shallow)
+
+        # for k, p in self.win_attn.named_parameters(): # 其中 k 是參數的名稱，p 是參數本身。
+        #     print(f'prompt name:', k)
+
         return src
 
 
@@ -264,86 +250,54 @@ class SetAttention(nn.Module):
         self.dropout2 = nn.Identity()
 
         self.activation = _get_activation_fn(activation)
-        
-        # prompt
-        # self.num_prompt = 1
-        # self.dim = 192
-        # # self.cur_prompt = torch.randn(self.num_prompt, self.dim)
-        # self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
-        # self.prompt_proj = nn.Identity()
-        # nn.init.xavier_uniform_(self.prompt.data)
 
-        # prompt pool
-        self.pool_size = 40 
-        self.length = 5 
-        self.top_k = 8 
-
-        self.PromptPool = PromptPool(self.d_model, self.length, self.pool_size, self.top_k)
-
-
-    def incorporate_prompt(self, query, key, value, prompt):
-        '''
-        Args:
-            prompt(bs, num_prompt, C)
-            query,key,value(set_num, set_size, C)
-            prompt_query,prompt_key,prompt_value(set_num, set_size+num_prompt, C)
-        '''
-        prompt_query = torch.cat((prompt, query), dim=1)
-        prompt_key = torch.cat((prompt, key), dim=1)
-        prompt_value = torch.cat((prompt, value), dim=1)
-        return prompt_query, prompt_key, prompt_value
-
-    def incorporate_mask(self, key_padding_mask, prompt):
-        '''
-        Args:
-            key_padding_mask(set_num, set_size)
-            prompt_mask(set_num, num_prompt)
-        Returns:
-            prompt_padding_mask(set_num, set_size+num_prompt)
-        '''
-        set_num = key_padding_mask.shape[0]
-        num_prompt = prompt.shape[1]
-        prompt_mask = torch.zeros(set_num, num_prompt, dtype=torch.bool, device=key_padding_mask.device)
-        prompt_padding_mask = torch.cat((prompt_mask, key_padding_mask), dim=1) 
-        return prompt_padding_mask
-
-    def forward(self, src, shallow, pos=None, key_padding_mask=None, voxel_inds=None):
+    def forward(self, src, pos=None, key_padding_mask=None, voxel_inds=None):
         '''
         Args:
             src (Tensor[float]): Voxel features with shape (N, C), where N is the number of voxels.
             pos (Tensor[float]): Position embedding vectors with shape (N, C).
             key_padding_mask (Tensor[bool]): Mask for redundant voxels within set. Shape of (set_num, set_size). (?, 36)
-            voxel_inds (Tensor[int]): Voxel indexs for each set. Shape of (set_num, set_size). (?, 36)
+            voxel_inds (Tensor[int]): Voxel indexs for each set. Shape of (set_num, set_size).
         Returns:
             src (Tensor[float]): Voxel features.
         '''
         set_features = src[voxel_inds] # set_features.size: (set_num, set_size=36, C=192)
-
         if pos is not None:
             set_pos = pos[voxel_inds] # set_pos: (set_num, set_size=36, C=192)
         else:
             set_pos = None
         if pos is not None:
-            query = set_features + set_pos # (set_num, set_size=36, C=192)
-            key = set_features + set_pos   # (set_num, set_size=36, C=192)
-            value = set_features           # (set_num, set_size=36, C=192)
+            query = set_features + set_pos
+            key = set_features + set_pos
+            value = set_features
 
-        # prompt pool
-        # if shallow:
-        prompt = self.PromptPool(set_features) # (bs, allowed_size * prompt_len, embed_dim)
-        query, key, value = self.incorporate_prompt(query, key, value, prompt)
-        key_padding_mask = self.incorporate_mask(key_padding_mask, prompt)
+        # prompt
+        # print(f'set_features shape: ', set_features.size())
+        # print(f'set_features: ', set_features)
+        # print(f'set_pos shape: ', set_pos.size())
+        # print(f'set_pos: ', set_pos)
+        # count = 0
+        # for bool in key_padding_mask[0]:
+        #     if bool is True:
+        #         count+=1
+        # print(f'key_padding_mask: ', key_padding_mask)
+        # count_true = torch.sum(key_padding_mask[0]).item()
+        # print(f'count_true: ', count_true)
+        # prompted_q = self.add_prompt(query, 50)
+        # print(f'set_features shape: ', set_features.size())
+        # print(f'prompted_q shape: ', prompted_q.size())
+        # print(f'query size: ', query.size())
 
         if key_padding_mask is not None:
-            src2 = self.self_attn(query, key, value, key_padding_mask)[0] # -> nn.MultiheadAttention(query: Tensor, key: Tensor, value: Tensor, key_padding_mask: Optional[Tensor] = None,
-                                                                                                    #need_weights: bool = True, attn_mask: Optional[Tensor] = None)
+            all_ones = key_padding_mask.eq(1).all().item()
+            if not all_ones:
+                src2 = self.self_attn(query, key, value, key_padding_mask)[0] # -> nn.MultiheadAttention(query: Tensor, key: Tensor, value: Tensor, key_padding_mask: Optional[Tensor] = None,
+                                                                                              #need_weights: bool = True, attn_mask: Optional[Tensor] = None)
         else:
             src2 = self.self_attn(query, key, value)[0]
 
-        # if shallow:
-        num_prompt = prompt.shape[1]
-        src2 = src2[:, num_prompt:, :]
-        
+        # print(f'src_origin shape: ', src2.size())
+
         # map voxel featurs from set space to voxel space: (set_num, set_size, C) --> (N, C)
         flatten_inds = voxel_inds.reshape(-1)
         unique_flatten_inds, inverse = torch.unique(flatten_inds, return_inverse=True)
@@ -358,58 +312,109 @@ class SetAttention(nn.Module):
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
-
         return src
 
 
-class PromptPool(nn.Module):
-    '''
-        Args:
-            set_features (Tensor[float]): Voxel features with shape (set_num, set_size=36, C=192).
-        Returns:
-            set_features (Tensor[float]): Dynamic prompt for each input frame (set_num, 1, C=192).
-    '''
-    def __init__(self, d_model, length, pool_size, top_k):
-        super().__init__()
-        self.embed_dim =  d_model
-        self.length =  length
-        self.pool_size =  pool_size
-        self.top_k = top_k
+# class SetAttention(nn.Module):
+
+#     def __init__(self, d_model, nhead, dropout, dim_feedforward=2048, activation="relu", batch_first=True, mlp_dropout=0):
+#         super().__init__()
+#         self.nhead = nhead
+#         if batch_first:
+#             self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+#         else:
+#             self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+
+#         # Implementation of Feedforward model
+#         self.linear1 = nn.Linear(d_model, dim_feedforward)
+#         self.dropout = nn.Dropout(mlp_dropout)
+#         self.linear2 = nn.Linear(dim_feedforward, d_model)
+#         self.d_model = d_model
+#         self.norm1 = nn.LayerNorm(d_model)
+#         self.norm2 = nn.LayerNorm(d_model)
+#         self.dropout1 = nn.Identity()
+#         self.dropout2 = nn.Identity()
         
-        # 使用 nn.Parameter 定义可训练的 prompt 参数
-        self.prompt = nn.Parameter(torch.Tensor(self.pool_size, self.length, self.embed_dim))
-        self.prompt_key = nn.Parameter(torch.Tensor(self.pool_size, self.embed_dim))
-        nn.init.xavier_uniform_(self.prompt)
-        nn.init.xavier_uniform_(self.prompt_key)
+#         # prompt
+#         self.num_prompt = 50
+#         self.set_size = 36
+#         self.dim = 192
+#         self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.set_size, self.dim))
+#         nn.init.xavier_uniform_(self.prompt)
+#         self.activation = _get_activation_fn(activation)
 
-    def l2_normalize(self, x, axis=None, epsilon=1e-12):
-        square_sum = torch.sum(torch.pow(x, 2), dim=axis, keepdim=True)
-        x_inv_norm = torch.rsqrt(torch.clamp(square_sum, min=epsilon))
-        return x * x_inv_norm
+#     def incorporate_prompt(self, query, key, value):
+#         prompt_query = torch.cat((self.prompt, query), dim=0)
+#         prompt_key = torch.cat((self.prompt, key), dim=0)
+#         prompt_value = torch.cat((self.prompt, value), dim=0)
+#         # print(f'prompt_query', prompt_query)
+#         return prompt_query, prompt_key, prompt_value
 
-    def forward(self, set_features):
-        set_features_mean, _ = torch.max(set_features, dim=1) # (set_num, C=192)
+#     def incorporate_mask(self, key_padding_mask):
+#         prompt_mask = torch.zeros(self.num_prompt, self.set_size, dtype=torch.bool, device=key_padding_mask.device)
+#         prompt_padding_mask = torch.cat((prompt_mask, key_padding_mask), dim=0)
+#         return prompt_padding_mask
+    
+#     def forward(self, src, pos=None, key_padding_mask=None, voxel_inds=None):
+#         '''
+#         Args:
+#             src (Tensor[float]): Voxel features with shape (N, C), where N is the number of voxels.
+#             pos (Tensor[float]): Position embedding vectors with shape (N, C).
+#             key_padding_mask (Tensor[bool]): Mask for redundant voxels within set. Shape of (set_num, set_size). (?, 36)
+#             voxel_inds (Tensor[int]): Voxel indexs for each set. Shape of (set_num, set_size).
+#         Returns:
+#             src (Tensor[float]): Voxel features.
+#         '''
+#         set_features = src[voxel_inds] # set_features.size: (set_num, set_size=36, C=192)
+#         if pos is not None:
+#             set_pos = pos[voxel_inds] # set_pos: (set_num, set_size=36, C=192)
+#         else:
+#             set_pos = None
+#         if pos is not None:
+#             query = set_features + set_pos
+#             key = set_features + set_pos
+#             value = set_features
 
-        # prompt_key_norm = self.l2_normalize(self.prompt_key, axis=-1) # (pool_size, embed_dim)
-        # set_features_norm = self.l2_normalize(set_features_mean, axis=-1) # (bs, embed_dim)
-        prompt_key_norm = F.normalize(self.prompt_key, p=2, dim=-1)
-        set_features_norm = F.normalize(set_features_mean, p=2, dim=-1)
+#         # prompt
+#         prompt_query, prompt_key, prompt_value = self.incorporate_prompt(query, key, value)
+#         prompt_padding_mask = self.incorporate_mask(key_padding_mask)
+
+#         # print(f'query', query)
+#         # print(self.prompt) # 正常的。沒有 nan
+#         # print(f'prompt_query:', prompt_query[:50, :, :]) # 正常的，沒有 nan
+#         # print(f'prompt_query size', prompt_query.size())
+#         # print(f'key_padding_mask', key_padding_mask.size())
+#         # print(f'prompt_padding_mask', prompt_padding_mask.size())
+#         # for i in range(prompt_padding_mask.size()[0]):
+#         #     set = prompt_padding_mask[i]
+#         #     print((set==False).sum())
+
+#         if key_padding_mask is not None:
+#             src2 = self.self_attn(prompt_query, prompt_key, prompt_value, prompt_padding_mask)[0] # -> nn.MultiheadAttention(query: Tensor, key: Tensor, value: Tensor, key_padding_mask: Optional[Tensor] = None,
+#                                                                                                     #need_weights: bool = True, attn_mask: Optional[Tensor] = None)
+#         else:
+#             src2 = self.self_attn(prompt_query, prompt_key, prompt_value)[0]
+
+#         # print(f'src2:', src2[:50, :, :])
+#         # print(f'src2 size', src2.size())
         
-        sim = torch.matmul(prompt_key_norm, torch.transpose(set_features_norm, 0, 1)) # pool_size, bs
-        sim = torch.transpose(sim, 0, 1)  # (bs, pool_size)
-        sim_top_k, idx = torch.topk(sim, k=self.top_k, dim=1) # (bs, top_k)
 
-        # Put pull_constraint loss calculation inside
-        batched_key_norm = prompt_key_norm[idx]  # bs, top_k, embed_dim
-        set_features_norm = torch.unsqueeze(set_features_norm, dim=1) # bs, 1, embed_dim
-        sim_pull = batched_key_norm * set_features_norm # bs, top_k, embed_dim
-        reduce_sim = torch.sum(sim_pull) / set_features_norm.shape[0]
-        store_penalty_from_this_step(reduce_sim)
+#         # map voxel featurs from set space to voxel space: (set_num, set_size, C) --> (N, C)
+#         flatten_inds = voxel_inds.reshape(-1)
+#         unique_flatten_inds, inverse = torch.unique(flatten_inds, return_inverse=True)
+#         perm = torch.arange(inverse.size(0), dtype=inverse.dtype, device=inverse.device)
+#         inverse, perm = inverse.flip([0]), perm.flip([0])
+#         perm = inverse.new_empty(unique_flatten_inds.size(0)).scatter_(0, inverse, perm)
+#         src2 = src2.reshape(-1, self.d_model)[perm]
+
+#         # FFN layer
+#         src = src + self.dropout1(src2)
+#         src = self.norm1(src)
+#         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+#         src = src + self.dropout2(src2)
+#         src = self.norm2(src)
         
-        batched_prompt_raw = self.prompt[idx] # (bs, top_k, self.length, self.embed_dim)
-        bs, allowed_size, prompt_len, embed_dim = batched_prompt_raw.shape
-        batched_prompt = batched_prompt_raw.view(bs, allowed_size * prompt_len, embed_dim)
-        return batched_prompt
+#         return src
 
 
 class Stage_Reduction_Block(nn.Module):
@@ -461,7 +466,6 @@ def _get_block_module(name):
     if name == "DSVTBlock":
         return DSVTBlock
     raise RuntimeError(F"This Block not exist.")
-
 
 
 class DSVTInputLayer(nn.Module):
@@ -524,7 +528,7 @@ class DSVTInputLayer(nn.Module):
                     block_posembed_layers.append(PositionEmbeddingLearned(input_dim, self.d_model[i]))
                 stage_posembed_layers.append(block_posembed_layers)
             self.posembed_layers.append(stage_posembed_layers)
-    
+       
     def forward(self, batch_dict):
         '''
         Args:
@@ -556,7 +560,7 @@ class DSVTInputLayer(nn.Module):
         '''
         voxel_feats = batch_dict['voxel_features']
         voxel_coors = batch_dict['voxel_coords'].long()
-        
+
         voxel_info = {}
         voxel_info['voxel_feats_stage0'] = voxel_feats.clone()
         voxel_info['voxel_coors_stage0'] = voxel_coors.clone()

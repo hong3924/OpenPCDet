@@ -17,7 +17,6 @@ from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler
 from train_utils.train_utils import train_model
 
-
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
@@ -34,7 +33,7 @@ def parse_config():
     parser.add_argument('--fix_random_seed', action='store_true', default=False, help='')
     parser.add_argument('--ckpt_save_interval', type=int, default=1, help='number of training epochs')
     parser.add_argument('--local_rank', type=int, default=0, help='local rank for distributed training')
-    parser.add_argument('--max_ckpt_save_num', type=int, default=30, help='max number of saved checkpoint')
+    parser.add_argument('--max_ckpt_save_num', type=int, default=80, help='max number of saved checkpoint')
     parser.add_argument('--merge_all_iters_to_one_epoch', action='store_true', default=False, help='')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER,
                         help='set extra config keys if needed')
@@ -90,7 +89,7 @@ def main():
     # output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     output_dir = cfg.ROOT_DIR / cfg.EXP_GROUP_PATH
     
-    ckpt_dir = output_dir / 'ckpt'
+    ckpt_dir = output_dir / 'ckpt' / 'prompt_pool_M40_L5_k8_deep'
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,23 +140,23 @@ def main():
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
 
-    if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
-        last_epoch = start_epoch + 1
-    else:
-        ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
+    # if args.ckpt is not None:
+    #     it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
+    #     last_epoch = start_epoch + 1
+    # else:
+    #     ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
               
-        if len(ckpt_list) > 0:
-            ckpt_list.sort(key=os.path.getmtime)
-            while len(ckpt_list) > 0:
-                try:
-                    it, start_epoch = model.load_params_with_optimizer(
-                        ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
-                    )
-                    last_epoch = start_epoch + 1
-                    break
-                except:
-                    ckpt_list = ckpt_list[:-1]
+    #     if len(ckpt_list) > 0:
+    #         ckpt_list.sort(key=os.path.getmtime)
+    #         while len(ckpt_list) > 0:
+    #             try:
+    #                 it, start_epoch = model.load_params_with_optimizer(
+    #                     ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
+    #                 )
+    #                 last_epoch = start_epoch + 1
+    #                 break
+    #             except:
+    #                 ckpt_list = ckpt_list[:-1]
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:

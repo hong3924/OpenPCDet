@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pcdet.ops.ingroup_inds.ingroup_inds_op import ingroup_inds
-
+import ipdb
 
 get_inner_win_inds_cuda = ingroup_inds
 
@@ -26,19 +26,19 @@ class PositionEmbeddingLearned(nn.Module):
 
 @torch.no_grad()
 def get_window_coors(coors, sparse_shape, window_shape, do_shift, shift_list=None, return_win_coors=False):
-
+    # ipdb.set_trace()
     if len(window_shape) == 2:
         win_shape_x, win_shape_y = window_shape
         win_shape_z = sparse_shape[-1]
     else:
-        win_shape_x, win_shape_y, win_shape_z = window_shape
-
-    sparse_shape_x, sparse_shape_y, sparse_shape_z = sparse_shape
+        win_shape_x, win_shape_y, win_shape_z = window_shape  # window_shape = [12, 12, 1]
+ 
+    sparse_shape_x, sparse_shape_y, sparse_shape_z = sparse_shape # [468, 468, 1]
     assert sparse_shape_z < sparse_shape_x, 'Usually holds... in case of wrong order'
 
-    max_num_win_x = int(np.ceil((sparse_shape_x / win_shape_x)) + 1) # plus one here to meet the needs of shift.
-    max_num_win_y = int(np.ceil((sparse_shape_y / win_shape_y)) + 1) # plus one here to meet the needs of shift.
-    max_num_win_z = int(np.ceil((sparse_shape_z / win_shape_z)) + 1) # plus one here to meet the needs of shift.
+    max_num_win_x = int(np.ceil((sparse_shape_x / win_shape_x)) + 1) # plus one here to meet the needs of shift. 40
+    max_num_win_y = int(np.ceil((sparse_shape_y / win_shape_y)) + 1) # plus one here to meet the needs of shift. 40
+    max_num_win_z = int(np.ceil((sparse_shape_z / win_shape_z)) + 1) # plus one here to meet the needs of shift. 2
     max_num_win_per_sample = max_num_win_x * max_num_win_y * max_num_win_z
 
     if do_shift:
@@ -77,6 +77,7 @@ def get_window_coors(coors, sparse_shape, window_shape, do_shift, shift_list=Non
     coors_in_win_z = shifted_coors_z % win_shape_z
     coors_in_win = torch.stack([coors_in_win_z, coors_in_win_y, coors_in_win_x], dim=-1)
     # coors_in_win = torch.stack([coors_in_win_x, coors_in_win_y], dim=-1)
+    # ipdb.set_trace()
     if return_win_coors:
         batch_win_coords = torch.stack([win_coors_z, win_coors_y, win_coors_x], dim=-1)
         return batch_win_inds, coors_in_win, batch_win_coords

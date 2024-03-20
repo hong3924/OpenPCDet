@@ -167,7 +167,8 @@ def main():
         epoch_id = num_list[-1] if num_list.__len__() > 0 else 'no_number'
         eval_output_dir = eval_output_dir / ('epoch_%s' % epoch_id) / cfg.DATA_CONFIG.DATA_SPLIT['test']
     else:
-        eval_output_dir = eval_output_dir / 'eval_all_default'
+        # eval_output_dir = eval_output_dir / 'eval_all_default'
+        eval_output_dir = eval_output_dir / 'prompt_pool_M40_L5_k8_deep'
 
     if args.eval_tag is not None:
         eval_output_dir = eval_output_dir / args.eval_tag

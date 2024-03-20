@@ -27,8 +27,8 @@ class PointFeatureEncoder(object):
                 ...
         """
         # 增加一 dim
-        new_dimension = np.zeros((data_dict['points'].shape[0], 1))
-        data_dict['points'] = np.hstack((data_dict['points'], new_dimension))
+        # new_dimension = np.zeros((data_dict['points'].shape[0], 1))
+        # data_dict['points'] = np.hstack((data_dict['points'], new_dimension))
 
         data_dict['points'], use_lead_xyz = getattr(self, self.point_encoding_config.encoding_type)(
             data_dict['points']

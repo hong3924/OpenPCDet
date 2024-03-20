@@ -44,8 +44,13 @@ class KittiDataset(DatasetTemplate):
             with open(info_path, 'rb') as f:
                 infos = pickle.load(f)
                 kitti_infos.extend(infos)
+        
+        # partial dataset
+        # partial_dataset_ratio = 0.2
+        # num_samples = int(len(kitti_infos) * partial_dataset_ratio)
+        # kitti_infos = kitti_infos[:num_samples]
 
-        self.kitti_infos.extend(kitti_infos)
+        self.kitti_infos.extend(kitti_infos) 
 
         if self.logger is not None:
             self.logger.info('Total samples for KITTI dataset: %d' % (len(kitti_infos)))
@@ -313,6 +318,10 @@ class KittiDataset(DatasetTemplate):
             pred_boxes_img = box_utils.boxes3d_kitti_camera_to_imageboxes(
                 pred_boxes_camera, calib, image_shape=image_shape
             )
+
+            # da from ST3D
+            # if self.dataset_cfg.get('SHIFT_COOR', None):
+            #     pred_boxes[:, 0:3] -= self.dataset_cfg.SHIFT_COOR
 
             pred_dict['name'] = np.array(class_names)[pred_labels - 1]
             pred_dict['alpha'] = -np.arctan2(-pred_boxes[:, 1], pred_boxes[:, 0]) + pred_boxes_camera[:, 6]

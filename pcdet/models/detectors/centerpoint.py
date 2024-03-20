@@ -1,5 +1,5 @@
 from .detector3d_template import Detector3DTemplate
-
+import ipdb
 
 class CenterPoint(Detector3DTemplate):
     def __init__(self, model_cfg, num_class, dataset):
@@ -25,12 +25,17 @@ class CenterPoint(Detector3DTemplate):
         disp_dict = {}
 
         loss_rpn, tb_dict = self.dense_head.get_loss()
+
+        # prompt_pool penalty
+        # penalty = self.backbone_3d.get_penalty()
         tb_dict = {
             'loss_rpn': loss_rpn.item(),
+            # 'penalty': penalty.item(),
             **tb_dict
         }
-
+        # pull_constraint_coeff = 0.5
         loss = loss_rpn
+        # loss = loss_rpn - pull_constraint_coeff * penalty # loss = loss_rpn
         return loss, tb_dict, disp_dict
 
     def post_processing(self, batch_dict):

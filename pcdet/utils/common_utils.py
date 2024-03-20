@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
+import datetime
 
 def check_numpy_to_torch(x):
     if isinstance(x, np.ndarray):
@@ -199,6 +199,7 @@ def init_dist_pytorch(tcp_port, local_rank, backend='nccl'):
         # init_method='tcp://127.0.0.1:%d' % tcp_port,
         # rank=local_rank,
         # world_size=num_gpus
+        timeout=datetime.timedelta(seconds=5400)
     )
     rank = dist.get_rank()
     return num_gpus, rank

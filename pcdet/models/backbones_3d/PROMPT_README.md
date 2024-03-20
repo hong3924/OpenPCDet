@@ -19,3 +19,21 @@
 6. dsvt_addtoken_shallow:
     Adding extra tokens in each sets.
     Only apply on 1-st DSVT Block's X-Axis Partition.
+
+7. dsvt_addtoken_shallow_temporal_v1:
+    Adding prompt generator which combines the past token with the current scene 
+    and then generate the current token.
+    Only apply on 1-st DSVT Block's X-Axis Partition.
+    ![Alt text](image.png)
+
+8. dsvt_addtoken_shallow_temporal_v2:
+    Adding prompt generator which combines the past token with the current scene 
+    and then generate the current token.
+    Only apply on 1-st DSVT Block's X-Axis Partition.
+    ![Alt text](image-1.png)
+
+9. dsvt_addtoken_shallow_temporal_v3:
+    Adding prompt generator which combines the past token with the current scene 
+    and then generate the current token.
+    same with dsvt_addtoken_shallow_temporal_v2, but in prompt generatotr, cancel using stroe back.
+    Only apply on 1-st DSVT Block's X-Axis Partition.

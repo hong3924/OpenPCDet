@@ -6,7 +6,7 @@ from math import ceil
 from pcdet.models.model_utils.dsvt_utils import get_window_coors, get_inner_win_inds_cuda, get_pooling_index, get_continous_inds
 from pcdet.models.model_utils.dsvt_utils import PositionEmbeddingLearned
 
-from .dsvt import DSVT, SetAttention, DSVT_EncoderLayer, _get_activation_fn
+from .dsvt_addvoxel import DSVT, SetAttention, DSVT_EncoderLayer, _get_activation_fn
 
 
 class PromptedDSVT(DSVT):
@@ -97,6 +97,43 @@ class PromptedDSVT(DSVT):
         batch_dict['pillar_features'] = batch_dict['voxel_features'] = output
         batch_dict['voxel_coords'] = voxel_info[f'voxel_coors_stage{self.stage_num - 1}']
         return batch_dict
+
+
+class DSVTBlock(nn.Module):
+    ''' Consist of two encoder layer, shift and shift back.
+    '''
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
+                 activation="relu", batch_first=True):
+        super().__init__()
+
+        encoder_1 = DSVT_EncoderLayer(d_model, nhead, dim_feedforward, dropout,
+                                        activation, batch_first)
+        encoder_2 = DSVT_EncoderLayer(d_model, nhead, dim_feedforward, dropout,
+                                        activation, batch_first)
+        self.encoder_list = nn.ModuleList([encoder_1, encoder_2])
+
+    def forward(
+            self,
+            src,
+            set_voxel_inds_list,
+            set_voxel_masks_list,
+            pos_embed_list,
+            block_id,
+    ):
+        num_shifts = 2
+        output = src
+        # TODO: bug to be fixed, mismatch of pos_embed
+        for i in range(num_shifts):
+            set_id = i
+            shift_id = block_id % 2
+            pos_embed_id = i
+            set_voxel_inds = set_voxel_inds_list[shift_id][set_id]
+            set_voxel_masks = set_voxel_masks_list[shift_id][set_id]
+            pos_embed = pos_embed_list[pos_embed_id]
+            layer = self.encoder_list[i]
+            output = layer(output, set_voxel_inds, set_voxel_masks, pos_embed) # -> DSVT_EncoderLayer(src, set_voxel_inds, set_voxel_masks, pos=None)
+
+        return output
 
 
 class PromptedDSVT_EncoderLayer(DSVT_EncoderLayer):

@@ -1,6 +1,6 @@
 import torch
 from functools import partial
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data import DistributedSampler as _DistributedSampler
 
 from pcdet.utils import common_utils

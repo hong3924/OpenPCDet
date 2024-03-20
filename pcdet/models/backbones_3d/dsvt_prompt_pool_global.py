@@ -1,4 +1,4 @@
-# dsvt_prompt_pool.py
+# dsvt_prompt_pool_global.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +7,8 @@ from math import ceil
 
 from pcdet.models.model_utils.dsvt_utils import get_window_coors, get_inner_win_inds_cuda, get_pooling_index, get_continous_inds
 from pcdet.models.model_utils.dsvt_utils import PositionEmbeddingLearned
+
+import ipdb
 
 penalty = 0
 def store_penalty_from_this_step(p):
@@ -264,22 +266,21 @@ class SetAttention(nn.Module):
         self.dropout2 = nn.Identity()
 
         self.activation = _get_activation_fn(activation)
-        
-        # prompt
-        # self.num_prompt = 1
-        # self.dim = 192
-        # # self.cur_prompt = torch.randn(self.num_prompt, self.dim)
-        # self.prompt = nn.Parameter(torch.zeros(self.num_prompt, self.dim))
-        # self.prompt_proj = nn.Identity()
-        # nn.init.xavier_uniform_(self.prompt.data)
 
         # prompt pool
-        self.pool_size = 40 
-        self.length = 5 
-        self.top_k = 8 
+        self.length = 5 # 1
+        self.pool_size = 40 # 10
+        self.top_k = 8 # 4
 
         self.PromptPool = PromptPool(self.d_model, self.length, self.pool_size, self.top_k)
 
+        # global prompt
+        self.num_global_prompt = 10
+        self.dim = 192
+        # self.cur_prompt = torch.randn(self.num_prompt, self.dim)
+        self.global_prompt = nn.Parameter(torch.Tensor(self.num_global_prompt, self.dim))
+        # self.prompt_proj = nn.Identity()
+        nn.init.xavier_uniform_(self.global_prompt)
 
     def incorporate_prompt(self, query, key, value, prompt):
         '''
@@ -288,9 +289,11 @@ class SetAttention(nn.Module):
             query,key,value(set_num, set_size, C)
             prompt_query,prompt_key,prompt_value(set_num, set_size+num_prompt, C)
         '''
-        prompt_query = torch.cat((prompt, query), dim=1)
-        prompt_key = torch.cat((prompt, key), dim=1)
-        prompt_value = torch.cat((prompt, value), dim=1)
+        bs = prompt.shape[0]
+        global_prompt = self.global_prompt.expand(bs, -1, -1)
+        prompt_query = torch.cat((prompt, global_prompt, query), dim=1)
+        prompt_key = torch.cat((prompt, global_prompt, query), dim=1)
+        prompt_value = torch.cat((prompt, global_prompt, query), dim=1)
         return prompt_query, prompt_key, prompt_value
 
     def incorporate_mask(self, key_padding_mask, prompt):
@@ -302,7 +305,7 @@ class SetAttention(nn.Module):
             prompt_padding_mask(set_num, set_size+num_prompt)
         '''
         set_num = key_padding_mask.shape[0]
-        num_prompt = prompt.shape[1]
+        num_prompt = prompt.shape[1] + self.num_global_prompt
         prompt_mask = torch.zeros(set_num, num_prompt, dtype=torch.bool, device=key_padding_mask.device)
         prompt_padding_mask = torch.cat((prompt_mask, key_padding_mask), dim=1) 
         return prompt_padding_mask
@@ -341,7 +344,7 @@ class SetAttention(nn.Module):
             src2 = self.self_attn(query, key, value)[0]
 
         # if shallow:
-        num_prompt = prompt.shape[1]
+        num_prompt = prompt.shape[1] + self.num_global_prompt
         src2 = src2[:, num_prompt:, :]
         
         # map voxel featurs from set space to voxel space: (set_num, set_size, C) --> (N, C)
