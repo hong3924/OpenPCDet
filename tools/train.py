@@ -17,6 +17,9 @@ from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler
 from train_utils.train_utils import train_model
 
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
@@ -74,7 +77,7 @@ def main():
             args.tcp_port, args.local_rank, backend='nccl'
         )
         dist_train = True
-
+    print(total_gpus)
     if args.batch_size is None:
         args.batch_size = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU
     else:
@@ -89,7 +92,7 @@ def main():
     # output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     output_dir = cfg.ROOT_DIR / cfg.EXP_GROUP_PATH
     
-    ckpt_dir = output_dir / 'ckpt' / 'prompt_pool_M40_L5_k8_deep'
+    ckpt_dir = output_dir / 'ckpt' #/ 'prompt_pool_M40_L5_k8_deep'
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
