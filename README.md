@@ -1,7 +1,7 @@
 # SOPP: Transfer Learning with Prompt Pool on 3D Object Detection
 
 SOPP Framework Overview:
-![architecture](./doc/SOPP.png)
+![architecture](./docs/SOPP.png)
 
 ## Abstract 
 With the rise of Large Language Models (LLMs) such as GPT-3, these models exhibit strong generalization capabilities. Through transfer learning techniques such as fine-tuning and prompt tuning, they can be adapted to various downstream tasks with minimal parameter adjustments. This approach is particularly common in the field of Natural Language Processing (NLP). This paper aims to explore the effectiveness of common prompt tuning methods in 3D object detection. We investigate whether a model trained on the large-scale Waymo dataset can serve as a foundation model and adapt to other scenarios within the 3D object detection field. This paper sequentially examines the impact of prompt tokens and prompt generators, and further proposes a Scene-Oriented Prompt Pool SOPP. We demonstrate the effectiveness of prompt pools in 3D object detection, with the goal of inspiring future researchers to delve deeper into the potential of prompts in the 3D field.
@@ -33,32 +33,32 @@ python test.py --cfg_file ${CONFIG_FILE} --ckpt_dir ${OUTPUT_PATH} --eval_all
 ### Main Results
 Performance comparison on the KITTI val set. The results are evaluated by
 the mean Average Precision with 40 recall positions. Best results among all methods except Full Fine-tune and From Scratch are bolded.
-![main results](./doc/main_results.png)
+![main results](./docs/main_results.png)
 
 ### Prompt Pool Position
 Analysis of adding a prompt pool to different corresponding set partitions.
-![pool position](./doc/pool_position.png)
+![pool position](./docs/pool_position.png)
 
 ### Pormpt Length & Select Top-K
 Comparison of 3D mAP with 40 recall positions for Prompt Length and Select top-K when the prompt pool size M = 40.
 
-![prompt length & select top-k](./doc/pool_heat_map.png)
+![prompt length & select top-k](./docs/pool_heat_map.png)
 
 ### Prompt Pool Size
 Comparison of 3D mAP with 40 recall positions for effect of different pool sizes M.
-![pool size](./doc/pool_size.png)
+![pool size](./docs/pool_size.png)
 
 ### KITTI Data Usage
 Comparison of 3D mAP with 40 recall positions for effect of the quantity of the target dataset (KITTI) used for training SOPP.
-![data usage](./doc/data_usage.png)
+![data usage](./docs/data_usage.png)
 
 ### Set Partitions t-SNE
 The t-SNE visualization of the distribution of different set partitions. Here, 4 blocks are used.
-![feature tsne](./doc/feature_tsne.png)
+![feature tsne](./docs/feature_tsne.png)
 
 ### Prompt Pool t-SNE
 The t-SNE visualization of the distribution of different prompt pools for the corresponding set partitions in SOPP.
-![prompt pool tsne](./doc/prompt_pool_tsne.png)
+![prompt pool tsne](./docs/prompt_pool_tsne.png)
 
 
 <!--
